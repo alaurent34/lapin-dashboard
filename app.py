@@ -23,6 +23,9 @@ from lapin.analysis import constants
 from lapin.figures import config
 from lapin.config import ROADS_DB_CONNECTION
 
+DATA_PATH = "./data/raw_data_project.csv"
+SEG_GEOM_PATH = ROADS_DB_CONNECTION['filename']
+
 FRENCH_DAY = {
     0: 'Lundi',
     1: 'Mardi',
@@ -50,7 +53,7 @@ def date_to_human_readable(datetime: pd.Series, locale='fr') -> pd.Series:
 app = dash.Dash(
     __name__, meta_tags=[{"name": "viewport", "content": "width=device-width"}],
 )
-app.title = "TEST LAPI"
+app.title = "Analyse LAPI"
 server = app.server
 
 
@@ -59,10 +62,8 @@ mapbox_access_token = 'pk.eyJ1IjoiYWxhdXJlbnQzNCIsImEiOiJja28xcnFocTIwb2QyMnd0ZG
 
 # Initialize data frame
 print('Read raw data...')
-df = pd.read_csv(
-    '../../output/20000_Test/cache/data_enhanced_restrict.csv'
-    #'./data/raw_data_sample.csv',
-)
+df = pd.read_csv(DATA_PATH)
+
 df[constants.DATETIME] = pd.to_datetime(df[constants.DATETIME])
 #df['day'] = df[constants.DATETIME].dt.day_of_week.map(FRENCH_DAY)
 df['day'] = date_to_human_readable(df[constants.DATETIME])
@@ -78,6 +79,7 @@ park_time = compile_parking_time(df)
 park_time['datetime'] = pd.to_datetime(park_time["datetime"])
 #park_time['day'] = park_time['datetime'].dt.day_of_week.map(FRENCH_DAY)
 park_time['day'] = date_to_human_readable(park_time['datetime'])
+park_time['park_time'] = park_time['park_time'].div(3600).round(1)
 park_time['hour_from'] = park_time['arrival_time'].dt.hour
 park_time['hour_to'] = park_time['departure_time'].dt.hour
 park_time['hour'] = park_time.apply(
@@ -93,6 +95,9 @@ occup['time'] = pd.to_datetime(occup['time'])
 #occup['day'] = occup['time'].dt.day_of_week.map(FRENCH_DAY) 
 occup['day'] = date_to_human_readable(occup['time'])
 occup['hour'] = occup['time'].dt.hour
+occup['occ'] = occup["occ"].apply(
+    lambda x: round(x, 2) if isinstance(x, float) else x
+)
 
 ## Merge metrics
 park_time_dh = park_time.pivot_table(
@@ -113,6 +118,11 @@ data = pd.merge(
     on=[constants.SEGMENT, constants.SIDE_OF_STREET, 'day', 'hour'],
     how='left'#'outer'
 )
+data['occ'] = data["occ"].apply(
+    lambda x: round(x, 2) if isinstance(x, float) else x
+)
+data['park_time'] = data['park_time'].round(1)
+
 # Rename metrics
 data.rename(
     columns={
@@ -124,15 +134,12 @@ data.rename(
     },
     inplace=True
 )
-DATA = data.copy()
-
 # Initialize segment
 print('Read segments geom...')
 #segments = gpd.read_file(
 #    '../../output/20000_Test/cache/stationnements_par_segment.csv'
 #)
-#segments_geo = gpd.read_file(ROADS_DB_CONNECTION['filename'])
-segments_geo = gpd.read_file('./data/segment_geo_sample.geojson')
+segments_geo = gpd.read_file(SEG_GEOM_PATH)
 segments_geo[constants.SIDE_OF_STREET] = segments_geo.COTE.map(
     {'Gauche':-1, 'Droite':1}
 )
@@ -173,6 +180,13 @@ metric_aggregation = {
     'Nb. Véhicule vus' :restriction_aggfunc,
     'Capacité'         :restriction_aggfunc,
     'Temps de stat.'   :restriction_aggfunc
+}
+
+DATA = data.copy()
+DF = df.copy()
+AGG_DATA = {
+    'Occupation': occup.copy(),
+    'Temps de stat.' : park_time.copy()
 }
 
 def generate_aggregation(df, aggregation, hour_selected):
@@ -276,10 +290,11 @@ def build_upper_left_panel():
 
 def get_color(gdf, metric_selected):
 
-    if metric_selected == 'Temps de stationnement':
+    if metric_selected == 'Temps de stat.':
         numeric_cuts=config.REMPLA_NUM_CUTS
         num_colors=config.REMPLA_COLORS
         base_cat_colors=config.BASIC_CAT_COLORS
+        num_colors = {k:f'#{int(v[0]*255):02x}{int(v[1]*255):02x}{int(v[2]*255):02x}' for k,v in num_colors.items()}
     else:
         numeric_cuts=config.OCC_NUM_CUTS
         num_colors=config.OCC_COLORS
@@ -360,7 +375,6 @@ def generate_geo_map(gdf: gpd.GeoDataFrame, metric_selected: str):
             lats = np.append(lats, y)
             lons = np.append(lons, x)
 
-        metric_display = round(metric, 2).__str__() if isinstance(metric, float) else metric.__str__()
         curb = go.Scattermapbox(
             lat=lats,
             lon=lons,
@@ -402,7 +416,7 @@ def generate_geo_map(gdf: gpd.GeoDataFrame, metric_selected: str):
                 lat=mean_lat, lon=mean_lng
             ),
             pitch=5,
-            zoom=12,
+            zoom=14,
             style="mapbox://styles/mapbox/light-v11",
         ),
     )
@@ -431,7 +445,7 @@ app.layout = html.Div(
                     children=[
                         html.P(
                             id="map-title",
-                            children="Analyses au jours de {}".format(
+                            children="Analyses du {}".format(
                                 day_list[0]
                             ),
                         ),
@@ -539,19 +553,26 @@ def update_checklist(selected, select_options, checked):
     Output("data-aggregated-container", "children"),
     [
         Input("geo-map", "selectedData"),
+        Input("metric-select", "value"),
+        Input("day-select", "value"),
+        Input("hour-select", "value")
     ],
-    [
-        State("metric-select", "value"),
-        State("day-select", "value"),
-        State("hour-select", "value")
-    ],
+    #[
+        #State("metric-select", "value"),
+        #State("day-select", "value"),
+        #State("hour-select", "value")
+    #],
 )
 def update_aggregated_datatable(geo_select, metric_select, day_select, hours_select):
-    day_agg = generate_aggregation(
-        df=DATA[DATA.day == day_select],
-        aggregation=metric_aggregation,
-        hour_selected=hours_select
-    )
+    #day_agg = generate_aggregation(
+        #df=DATA[DATA.day == day_select],
+        #aggregation=metric_aggregation,
+        #hour_selected=hours_select
+    #)
+    day_agg = AGG_DATA[metric_select][
+        (AGG_DATA[metric_select].day == day_select) & \
+        (AGG_DATA[metric_select].hour.isin(hours_select))
+    ]
     # make table from geo-select
     geo_data_list = [] 
 
@@ -573,17 +594,31 @@ def update_aggregated_datatable(geo_select, metric_select, day_select, hours_sel
                     geo_data_list.append(dff)
 
     # keep only metric column
-    cols_to_rm = [metric_columns[x] for x in metric_to_rm[metric_select]]
-    cols_to_rm = [item for sublist in cols_to_rm for item in sublist]
-    cols = [col for col in day_agg.columns if col not in cols_to_rm]
+    #cols_to_rm = [metric_columns[x] for x in metric_to_rm[metric_select]]
+    #cols_to_rm = [item for sublist in cols_to_rm for item in sublist]
+    #cols = [col for col in day_agg.columns if col not in cols_to_rm]
 
     if geo_data_list:
         geo_data_df = pd.concat(geo_data_list)
-        geo_data_df = geo_data_df[cols]
+        #geo_data_df = geo_data_df[cols]
     else:
-        geo_data_df = pd.DataFrame(data=DATA, columns=cols)
+        geo_data_df = pd.DataFrame(data=day_agg)
 
-    geo_data_df.drop(columns=['geometry'], inplace=True, errors='ignore') 
+    # remove cols
+    geo_data_df.drop(
+        columns=['geometry', 'segment_geodbl_geom', 'day', 'hour'],
+        inplace=True, 
+        errors='ignore'
+    ) 
+    geo_data_df.drop_duplicates(inplace=True)
+    try:
+        geo_data_df['datetime'] = geo_data_df['datetime'].dt.strftime('%Y-%m-%d %H:%M:%S')
+    except:
+        pass
+    try:
+        geo_data_df['time'] = geo_data_df['datetime'].dt.strftime('%Y-%m-%d %H:%M:%S')
+    except:
+        pass
 
     geo_data_df = geo_data_df.drop_duplicates()
     data_json = geo_data_df.to_dict("rows")
@@ -592,11 +627,12 @@ def update_aggregated_datatable(geo_select, metric_select, day_select, hours_sel
         id="data-aggregated-table",
         columns=[{"name": i, "id": i} for i in geo_data_df.columns],
         data=data_json,
-        filter_action="native",
-        page_size=20,
+        #filter_action="native",
+        page_size=5,
         style_cell={"background-color": "#242a3b", "color": "#7b7d8d"},
         style_as_list_view=False,
         style_header={"background-color": "#1f2536", "padding": "0px 5px"},
+        export_format="xlsx",
     )
 
 
@@ -604,11 +640,13 @@ def update_aggregated_datatable(geo_select, metric_select, day_select, hours_sel
     Output("raw-data-container", "children"),
     [
         Input("geo-map", "selectedData"),
+        Input("day-select", "value"),
+        Input("hour-select", "value")
     ],
-    [
-        State("day-select", "value"),
-        State("hour-select", "value")
-    ]
+    #[
+        #State("day-select", "value"),
+        #State("hour-select", "value")
+    #]
 )
 def update_raw_data(geo_select, day_select, hour_select):
     raw_data_select = []
@@ -623,22 +661,23 @@ def update_raw_data(geo_select, day_select, hour_select):
             if "customdata" in point.keys():
                 seg = point["customdata"][0]
                 sos = point["customdata"][1]
-                raw_data_select.append(df[(
-                    (df.segment == seg) & 
-                    (df.side_of_street == sos) &
-                    (df.day == day_select) &
-                    df.hour.isin(hour_select)
-                )])
+                raw_data_select.append(DF[(
+                    (DF.segment == seg) & 
+                    (DF.side_of_street == sos) &
+                    (DF.day == day_select) &
+                    DF.hour.isin(hour_select)
+                )][RAW_COLS_OI])
 
     if raw_data_select:
         raw_data_select = pd.concat(raw_data_select)
     else:
-        raw_data_select = pd.DataFrame(data=df, columns=df.columns)
+        raw_data_select = pd.DataFrame(data=DF, columns=DF[RAW_COLS_OI].columns)
 
     try:
         raw_data_select['datetime'] = raw_data_select['datetime'].dt.strftime('%Y-%m-%d %H:%M:%S')
     except:
         pass
+
     raw_data_select.drop(columns=['segment_geodbl_geom'], inplace=True, errors='ignore') 
 
     raw_data_select.drop_duplicates(inplace=True)
@@ -656,9 +695,10 @@ def update_raw_data(geo_select, day_select, hour_select):
             "color": "#7b7d8d",
         },
         sort_mode="multi",
-        page_size=50,
+        page_size=5,
         style_as_list_view=False,
         style_header={"background-color": "#1f2536", "padding": "2px 12px 0px 12px"},
+        export_format="xlsx",
     )
 
 
