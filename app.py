@@ -56,7 +56,6 @@ app = dash.Dash(
 app.title = "Analyse LAPI"
 server = app.server
 
-
 # Plotly mapbox public token
 mapbox_access_token = 'pk.eyJ1IjoiYWxhdXJlbnQzNCIsImEiOiJja28xcnFocTIwb2QyMnd0ZG5oc2pvaDl4In0.iOefsxCQnpJSarh39T2aIg' 
 
@@ -431,7 +430,7 @@ app.layout = html.Div(
             className="banner",
             children=[
                 html.H6("Analyse d'occupation par LAPI"),
-                html.Img(src=app.get_asset_url("plotly_logo_white.png")),
+                html.Img(src=app.get_asset_url("LOGO OFFICIEL.png")),
             ],
         ),
         html.Div(
