@@ -41,18 +41,18 @@ FRENCH_DAY = {
 }
 
 FRENCH_MONTH = {
-    0: 'janvier',
-    1: 'février',
-    2: 'mars',
-    3: 'avril',
-    4: 'mai',
-    5: 'juin',
-    6: 'juillet',
-    7: 'août',
-    8: 'septembre',
-    9: 'octobre',
-    10: 'novembre',
-    11: 'décembre',
+    1: 'janvier',
+    2: 'février',
+    3: 'mars',
+    4: 'avril',
+    5: 'mai',
+    6: 'juin',
+    7: 'juillet',
+    8: 'août',
+    9: 'septembre',
+    10: 'octobre',
+    11: 'novembre',
+    12: 'décembre',
 }
 
 RAW_COLS_OI = ['data_index', 'uuid', 'datetime', 'lat', 'lng', 'plaque',
@@ -85,6 +85,11 @@ def date_to_human_readable(datetime: pd.Series, locale='en_US') -> pd.Series:
            datetime.dt.day.astype(str) + " " + \
            datetime.dt.month.map(FRENCH_MONTH) + " " + \
            datetime.dt.year.astype(str)
+    #return datetime.dt.day_name(locale=locale) + " " + \
+           #datetime.dt.day.astype(str) + " " + \
+           #datetime.dt.month_name(locale=locale).str.lower() + " " + \
+           #datetime.dt.year.astype(str)
+
 
 ###########################
 #######  READ DATA ########
@@ -92,97 +97,100 @@ def date_to_human_readable(datetime: pd.Series, locale='en_US') -> pd.Series:
 
 # Initialize data frame
 print('Read raw data...')
-df = pd.read_csv(DATA_PATH)
+df = pd.read_csv(
+    DATA_PATH,
+    dtype={'data_index': str, 'modification':str}
+)
 # add columns
 df[constants.DATETIME] = pd.to_datetime(df[constants.DATETIME])
 df['day'] = date_to_human_readable(df[constants.DATETIME])
 df['hour'] = df[constants.DATETIME].dt.hour
 df = df[~df.is_restrict]
 
-# Generate all metrics
-## Parking time
-print('Compute parking time...')
-park_time = compile_parking_time(df)    
-# remove car that were here on start/end
-#park_time = park_time[~park_time.first_or_last]
-park_time['datetime'] = pd.to_datetime(park_time["datetime"])
-#park_time['day'] = park_time['datetime'].dt.day_of_week.map(FRENCH_DAY)
-park_time['day'] = date_to_human_readable(park_time['datetime'])
-park_time['park_time'] = park_time['park_time'].div(3600).round(1)
-park_time['hour_from'] = park_time['arrival_time'].dt.hour
-park_time['hour_to'] = park_time['departure_time'].dt.hour
-park_time['hour'] = park_time.apply(
-    func=lambda x: np.arange(x.hour_from, x.hour_to+1, 1),
-    axis=1
-)
-park_time = park_time.explode('hour', ignore_index=True)
-
-## Occupancy
-print('Compute occupancy...')
-occup = compile_occupancy(df)
-occup['time'] = pd.to_datetime(occup['time'])
-#occup['day'] = occup['time'].dt.day_of_week.map(FRENCH_DAY) 
-occup['day'] = date_to_human_readable(occup['time'])
-occup['hour'] = occup['time'].dt.hour
-occup['occ'] = occup["occ"].apply(
-    lambda x: round(x, 2) if isinstance(x, float) else x
-)
-
-## Merge metrics
-park_time_dh = park_time.pivot_table(
-    values=['park_time'],
-    index=[constants.SEGMENT, constants.SIDE_OF_STREET, 'day', 'hour'],
-    aggfunc=lambda x: restriction_aggfunc(x.to_list()),
-    dropna=False
-).reset_index().dropna()
-occup_dh = occup.pivot_table(
-    values=['occ', 'veh_sighted', constants.CAP_N_VEH],
-    index=[constants.SEGMENT, constants.SIDE_OF_STREET, 'day', 'hour'],
-    aggfunc=lambda x: restriction_aggfunc(x.to_list()),
-    dropna=False
-).reset_index().dropna()
-data = pd.merge(
-    left=occup_dh,
-    right=park_time_dh,
-    on=[constants.SEGMENT, constants.SIDE_OF_STREET, 'day', 'hour'],
-    how='left'#'outer'
-)
-data['occ'] = data["occ"].apply(
-    lambda x: round(x, 2) if isinstance(x, float) else x
-)
-data['park_time'] = data['park_time'].round(1)
-
-# Rename metrics
-data.rename(
-    columns={
-        'occ': 'Occupation',
-        'veh_sighted': 'Nb. Véhicule vus',
-        constants.CAP_N_VEH: 'Capacité',
-        'park_time': 'Temps de stat.'
-
-    },
-    inplace=True
-)
 # Initialize segment
-print('Read segments geom...')
-#segments = gpd.read_file(
-#    '../../output/20000_Test/cache/stationnements_par_segment.csv'
-#)
 segments_geo = gpd.read_file(SEG_GEOM_PATH)
 segments_geo[constants.SIDE_OF_STREET] = segments_geo.COTE.map(
     {'Gauche':-1, 'Droite':1}
 )
 
-# Restriction Handler
-#resH = RestrictionHandler(segments)
+#########################
+####### GET DATA ########
+#########################
+
+def get_dataframe(day, hours):
+    return df[(df['day'] == day) & df['hour'].isin(hours)].copy()
+
+def get_parking_time(day, hours):
+    ## Parking time
+    df = get_dataframe(day, hours)
+    park_time = compile_parking_time(df)    
+
+    park_time['datetime'] = pd.to_datetime(park_time["datetime"])
+    park_time['day'] = date_to_human_readable(park_time['datetime'])
+    park_time['park_time'] = park_time['park_time'].div(3600).round(1)
+    park_time['hour_from'] = park_time['arrival_time'].dt.hour
+    park_time['hour_to'] = park_time['departure_time'].dt.hour
+    park_time['hour'] = park_time.apply(
+        func=lambda x: np.arange(x.hour_from, x.hour_to+1, 1),
+        axis=1
+    )
+    park_time = park_time.explode('hour', ignore_index=True)
+     
+    return park_time
+
+def get_occupancy(day, hours):
+    ## Occupancy
+    df = get_dataframe(day, hours)
+    occup = compile_occupancy(df)
+
+    occup['time'] = pd.to_datetime(occup['time'])
+    occup['day'] = date_to_human_readable(occup['time'])
+    occup['hour'] = occup['time'].dt.hour
+    occup['occ'] = occup["occ"].apply(
+        lambda x: round(x, 2) if isinstance(x, float) else x
+    )
+    
+    return occup
+
+def aggregate_pk_time(day, hours):
+    park_time = get_parking_time(day, hours)
+    park_time_dh = park_time.pivot_table(
+        values=['park_time'],
+        index=[constants.SEGMENT, constants.SIDE_OF_STREET, 'day', 'hour'],
+        aggfunc=lambda x: restriction_aggfunc(x.to_list()),
+        dropna=False
+    ).reset_index().dropna()
+
+    park_time_dh['park_time'] = park_time_dh['park_time'].round(1)
+
+    return park_time_dh.rename(columns={
+        'park_time': 'Temps de stat.'
+    })
+
+def aggregate_occup(day, hours):
+    occup = get_occupancy(day, hours)
+    occup_dh = occup.pivot_table(
+        values=['occ', 'veh_sighted', constants.CAP_N_VEH],
+        index=[constants.SEGMENT, constants.SIDE_OF_STREET, 'day', 'hour'],
+        aggfunc=lambda x: restriction_aggfunc(x.to_list()),
+        dropna=False
+    ).reset_index().dropna()
+
+    occup_dh['occ'] = occup_dh["occ"].apply(
+        lambda x: round(x, 2) if isinstance(x, float) else x
+    )
+
+    return occup_dh.rename(columns={
+        'occ': 'Occupation',
+        'veh_sighted': 'Nb. Véhicule vus',
+        constants.CAP_N_VEH: 'Capacité',
+    })
+
 
 # Parameters
 ## Day list
 day_list = list(df.sort_values('datetime')['day'].unique())
-#day_list = sorted(
-    #list(data['day'].unique()),
-    #key=lambda x: {v: k for k, v in FRENCH_DAY.items()}[x]
-#)
+day_hour_dict = df.groupby('day')['hour'].unique()
 
 ## Cost Metric
 metric_display = [
@@ -211,20 +219,17 @@ metric_aggregation = {
     'Temps de stat.'   :restriction_aggfunc
 }
 
-DATA = data.copy()
 DF = df.copy()
-AGG_DATA = {
-    'Occupation': occup.copy(),
-    'Temps de stat.' : park_time.copy()
-}
 
-def generate_aggregation(df, aggregation, hour_selected):
-    if hour_selected:
-        data_filtered = df[
-            df['hour'].isin(hour_selected)
-        ]
+def generate_aggregation(aggregation, day_selected, hour_selected, metric_selected):
+    if metric_selected == 'Occupation':
+        data_filtered = aggregate_occup(day_selected, hour_selected)
+        data_filtered['Temps de stat.'] = np.nan
     else:
-        data_filtered = df
+        data_filtered = aggregate_pk_time(day_selected, hour_selected)
+        data_filtered['Nb. Véhicule vus'] = np.nan
+        data_filtered['Capacité'] = np.nan
+        data_filtered['Occupation'] = np.nan
 
     grouped = (
         data_filtered.groupby([constants.SEGMENT, constants.SIDE_OF_STREET])
@@ -240,6 +245,10 @@ def generate_aggregation(df, aggregation, hour_selected):
 
     #as geopandas.GeoDataFrame
     grouped = gpd.GeoDataFrame(grouped, geometry='geometry', crs=segments_geo.crs)
+    grouped['Occupation'] = grouped["Occupation"].apply(
+        lambda x: round(x, 2) if isinstance(x, float) else x
+    )
+    grouped['Temps de stat.'] = grouped['Temps de stat.'].round(1)
 
     return grouped
     
@@ -258,7 +267,7 @@ def build_upper_left_panel():
                     html.Div(
                         id="day-select-outer",
                         children=[
-                            html.Label("Select a day"),
+                            html.Label("Choisir un jours"),
                             dcc.Dropdown(
                                 id="day-select",
                                 options=[{"label": i, "value": i} for i in day_list],
@@ -285,17 +294,15 @@ def build_upper_left_panel():
                 children=[
                     html.Label("Choisir une heure"),
                     html.Div(
-                        id="checklist-container",
-                        children=dcc.Checklist(
-                            id="hour-select-all",
-                            options=[{'label': 'Selectionnez toutes les heures', 'value': 'All'}],
-                            value=[],
-                        ),
-                    ),
-                    html.Div(
-                        id="hour-select-dropdown-outer",
-                        children=dcc.Dropdown(
-                            id="hour-select", multi=True, searchable=True,
+                        id="hour-selector",
+                        children=dcc.RangeSlider(
+                            id="hour-select",
+                            min=day_hour_dict[day_list[0]][0], 
+                            max=day_hour_dict[day_list[0]][-1], 
+                            step=1,
+                            value=[day_hour_dict[day_list[0]][0], day_hour_dict[day_list[0]][1]], 
+                            marks={int(h):f"{h:02d}:00" for h in day_hour_dict[day_list[0]]},
+                            allowCross=False,
                         ),
                     ),
                 ],
@@ -404,22 +411,7 @@ def generate_geo_map(gdf: gpd.GeoDataFrame, metric_selected: str):
             lats = np.append(lats, y)
             lons = np.append(lons, x)
 
-        curb = go.Scattermapbox(
-            lat=lats,
-            lon=lons,
-            mode="markers+lines",
-            #marker=go.scattermapbox.Marker(
-            #    #line=dict(width = 1),
-            #    color = color,
-            #),
-            line=dict(
-                color=color,
-            ),
-            opacity=0.8,
-            selected=dict(marker={"color": "#ffff00"}),
-            customdata=[(seg,sos, metric, nb_veh, cap) for i in range(len(lats))],
-            hoverinfo="text",
-            text=seg.__str__()
+        text_info = (seg.__str__()
             + "<br>" 
             + metric_selected.__str__()
             + ':'
@@ -427,7 +419,27 @@ def generate_geo_map(gdf: gpd.GeoDataFrame, metric_selected: str):
             + "<br> Capacité:"
             + f" {cap}"
             + "<br> Nombre de véhicule:"
-            + " {:,.2f}".format(nb_veh),
+            + " {:,.2f}".format(nb_veh))
+        if metric_selected == 'Temps de stat.':
+            text_info = (seg.__str__()
+                + "<br>" 
+                + metric_selected.__str__()
+                + ':'
+                + f" {metric}")
+
+
+        curb = go.Scattermapbox(
+            lat=lats,
+            lon=lons,
+            mode="markers+lines",
+            line=dict(
+                color=color,
+            ),
+            opacity=0.8,
+            selected=dict(marker={"color": "#ffff00"}),
+            customdata=[(seg,sos, metric, nb_veh, cap) for i in range(len(lats))],
+            hoverinfo="text",
+            text=text_info, 
         )
         curbs.append(curb)
 
@@ -526,57 +538,27 @@ app.layout = html.Div(
 
 @app.callback(
     [
+        Output("hour-select", "min"),
+        Output("hour-select", "max"),
         Output("hour-select", "value"),
-        Output("hour-select", "options"),
+        Output("hour-select", "marks"),
         Output("map-title", "children"),
     ],
-    [Input("hour-select-all", "value"), Input("day-select", "value"),],
+    [Input("day-select", "value"),],
 )
-def update_region_dropdown(select_all, day_select):
-    day_data = DATA[DATA.day == day_select]
-    hours = day_data["hour"].sort_values().unique()
-    options = [{"label": i, "value": i} for i in hours]
+def update_region_dropdown(day_select):
+    min=day_hour_dict[day_select][0] 
+    max=day_hour_dict[day_select][-1] 
+    value=[int(day_hour_dict[day_select][0]), int(day_hour_dict[day_select][1])] 
+    marks={int(h):f"{h:02d}:00" for h in day_hour_dict[day_select]}
 
-    ctx = dash.callback_context
-    if ctx.triggered[0]["prop_id"].split(".")[0] == "hour-select-all":
-        if select_all == ["All"]:
-            value = [i["value"] for i in options]
-        else:
-            value = dash.no_update
-    else:
-        value = hours[:4]
     return (
+        int(min),
+        int(max),
         value,
-        options,
-        "Analyses au jours de {}".format(day_select),
+        marks,
+        "Analyses du {}".format(day_select),
     )
-
-
-@app.callback(
-    Output("checklist-container", "children"),
-    [Input("hour-select", "value")],
-    [State("hour-select", "options"), State("hour-select-all", "value")],
-)
-def update_checklist(selected, select_options, checked):
-    if len(selected) < len(select_options) and len(checked) == 0:
-        raise PreventUpdate()
-
-    elif len(selected) < len(select_options) and len(checked) == 1:
-        return dcc.Checklist(
-            id="hour-select-all",
-            options=[{"label": "Selectionnez toutes les heures", "value": "All"}],
-            value=[],
-        )
-
-    elif len(selected) == len(select_options) and len(checked) == 1:
-        raise PreventUpdate()
-
-    return dcc.Checklist(
-        id="hour-select-all",
-        options=[{"label": "Selectionnez toutes les heures", "value": "All"}],
-        value=["All"],
-    )
-
 
 @app.callback(
     Output("data-aggregated-container", "children"),
@@ -598,10 +580,11 @@ def update_aggregated_datatable(geo_select, metric_select, day_select, hours_sel
         #aggregation=metric_aggregation,
         #hour_selected=hours_select
     #)
-    day_agg = AGG_DATA[metric_select][
-        (AGG_DATA[metric_select].day == day_select) & \
-        (AGG_DATA[metric_select].hour.isin(hours_select))
-    ]
+
+    if metric_select == 'Occupation':
+        day_agg = get_occupancy(day_select, hours_select)
+    else:
+        day_agg = get_parking_time(day_select, hours_select)
     # make table from geo-select
     geo_data_list = [] 
 
@@ -656,7 +639,7 @@ def update_aggregated_datatable(geo_select, metric_select, day_select, hours_sel
         id="data-aggregated-table",
         columns=[{"name": i, "id": i} for i in geo_data_df.columns],
         data=data_json,
-        #filter_action="native",
+        sort_action="native",
         page_size=5,
         style_cell={"background-color": "#242a3b", "color": "#7b7d8d"},
         style_as_list_view=False,
@@ -672,10 +655,6 @@ def update_aggregated_datatable(geo_select, metric_select, day_select, hours_sel
         Input("day-select", "value"),
         Input("hour-select", "value")
     ],
-    #[
-        #State("day-select", "value"),
-        #State("hour-select", "value")
-    #]
 )
 def update_raw_data(geo_select, day_select, hour_select):
     raw_data_select = []
@@ -716,7 +695,6 @@ def update_raw_data(geo_select, day_select, hour_select):
         id="raw-data-table",
         columns=[{"name": i, "id": i} for i in raw_data_select.columns],
         data=raw_data_select.to_dict("rows"),
-        filter_action="native",
         sort_action="native",
         style_cell={
             "textOverflow": "ellipsis",
@@ -742,9 +720,10 @@ def update_raw_data(geo_select, day_select, hour_select):
 def update_geo_map(metric_select, hour_select, day_select):
     # generate geo map from state-select, procedure-select
     day_hour_agg_data = generate_aggregation(
-        df=data[data.day == day_select],
         aggregation=metric_aggregation,
-        hour_selected=hour_select
+        day_selected=day_select,
+        hour_selected=hour_select,
+        metric_selected=metric_select
     )
 
     return generate_geo_map(day_hour_agg_data, metric_select)
