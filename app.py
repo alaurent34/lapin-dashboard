@@ -23,6 +23,10 @@ from lapin.analysis import constants
 from lapin.figures import config
 from lapin.config import ROADS_DB_CONNECTION
 
+#######################
+####### GLOBALS #######
+#######################
+
 DATA_PATH = "./data/raw_data_project.csv"
 SEG_GEOM_PATH = ROADS_DB_CONNECTION['filename']
 
@@ -36,19 +40,29 @@ FRENCH_DAY = {
     6: 'Dimanche'
 }
 
+FRENCH_MONTH = {
+    0: 'janvier',
+    1: 'février',
+    2: 'mars',
+    3: 'avril',
+    4: 'mai',
+    5: 'juin',
+    6: 'juillet',
+    7: 'août',
+    8: 'septembre',
+    9: 'octobre',
+    10: 'novembre',
+    11: 'décembre',
+}
+
 RAW_COLS_OI = ['data_index', 'uuid', 'datetime', 'lat', 'lng', 'plaque',
        'plate_state', 'segment', 'point_on_segment', 'lap', 'dir_veh',
        'modification', 'side_of_street', 'restrictions', 'res_days',
        'res_hour_from', 'res_hour_to', 'nb_places_total'] 
 
-def date_to_human_readable(datetime: pd.Series, locale='fr') -> pd.Series:
-    if not pd.api.types.is_datetime64_any_dtype(datetime):
-       datetime = pd.to_datetime(datetime) 
-
-    return datetime.dt.day_name(locale=locale) + " " + \
-           datetime.dt.day.astype(str) + " " + \
-           datetime.dt.month_name(locale=locale).str.lower() + " " + \
-           datetime.dt.year.astype(str)
+######################
+###### DASH APP ######
+######################
 
 app = dash.Dash(
     __name__, meta_tags=[{"name": "viewport", "content": "width=device-width"}],
@@ -59,12 +73,28 @@ server = app.server
 # Plotly mapbox public token
 mapbox_access_token = 'pk.eyJ1IjoiYWxhdXJlbnQzNCIsImEiOiJja28xcnFocTIwb2QyMnd0ZG5oc2pvaDl4In0.iOefsxCQnpJSarh39T2aIg' 
 
+######################
+####### HELPER #######
+######################
+
+def date_to_human_readable(datetime: pd.Series, locale='en_US') -> pd.Series:
+    if not pd.api.types.is_datetime64_any_dtype(datetime):
+       datetime = pd.to_datetime(datetime) 
+
+    return datetime.dt.day_of_week.map(FRENCH_DAY) + " " + \
+           datetime.dt.day.astype(str) + " " + \
+           datetime.dt.month.map(FRENCH_MONTH) + " " + \
+           datetime.dt.year.astype(str)
+
+###########################
+#######  READ DATA ########
+###########################
+
 # Initialize data frame
 print('Read raw data...')
 df = pd.read_csv(DATA_PATH)
-
+# add columns
 df[constants.DATETIME] = pd.to_datetime(df[constants.DATETIME])
-#df['day'] = df[constants.DATETIME].dt.day_of_week.map(FRENCH_DAY)
 df['day'] = date_to_human_readable(df[constants.DATETIME])
 df['hour'] = df[constants.DATETIME].dt.hour
 df = df[~df.is_restrict]
