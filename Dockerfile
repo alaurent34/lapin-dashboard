@@ -5,7 +5,7 @@ COPY ./data /data
 COPY ./assets /assets
 COPY ./requirements.txt /requirements.txt
 COPY ./app.py ./app.py 
-WORKDIR /app
+WORKDIR /
 RUN set -ex && \
     pip install -r requirements.txt &&\
     pip install ./lapin-0.2.0.tar.gz
