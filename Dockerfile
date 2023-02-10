@@ -4,6 +4,7 @@ ENV DASH_DEBUG_MODE False
 COPY ./data /data
 COPY ./assets /assets
 COPY ./requirements.txt /requirements.txt
+COPY ./lapin-0.2.0.tar.gz ./lapin-0.2.0.tar.gz
 COPY ./app.py ./app.py 
 WORKDIR /
 RUN set -ex && \
