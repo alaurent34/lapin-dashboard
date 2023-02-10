@@ -30,6 +30,7 @@ from lapin.config import ROADS_DB_CONNECTION
 DATA_PATH = "./data/raw_data_project.csv"
 SEG_GEOM_PATH = ROADS_DB_CONNECTION['filename']
 
+# There might not be locales on the server
 FRENCH_DAY = {
     0: 'Lundi',
     1: 'Mardi',
@@ -85,11 +86,6 @@ def date_to_human_readable(datetime: pd.Series, locale='en_US') -> pd.Series:
            datetime.dt.day.astype(str) + " " + \
            datetime.dt.month.map(FRENCH_MONTH) + " " + \
            datetime.dt.year.astype(str)
-    #return datetime.dt.day_name(locale=locale) + " " + \
-           #datetime.dt.day.astype(str) + " " + \
-           #datetime.dt.month_name(locale=locale).str.lower() + " " + \
-           #datetime.dt.year.astype(str)
-
 
 ###########################
 #######  READ DATA ########
@@ -568,18 +564,8 @@ def update_region_dropdown(day_select):
         Input("day-select", "value"),
         Input("hour-select", "value")
     ],
-    #[
-        #State("metric-select", "value"),
-        #State("day-select", "value"),
-        #State("hour-select", "value")
-    #],
 )
 def update_aggregated_datatable(geo_select, metric_select, day_select, hours_select):
-    #day_agg = generate_aggregation(
-        #df=DATA[DATA.day == day_select],
-        #aggregation=metric_aggregation,
-        #hour_selected=hours_select
-    #)
 
     if metric_select == 'Occupation':
         day_agg = get_occupancy(day_select, hours_select)
